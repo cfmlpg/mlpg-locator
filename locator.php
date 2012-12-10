@@ -1,144 +1,113 @@
 <?php
 
-// Error reporting
-ini_set("display_errors", 1); 
-error_reporting(E_ALL);
+/*** These constants control the behaviour of Locator class ***/
 
+/**
+ * Marker's MD5 hash
+ */
 define('MARKER_MD5', 'YgIC5DRjGYcY2F4I+vJkOw==');
-define('API_URL', 'https://api.4chan.org/mlp/res/<id>.json');
-define('CATALOG_URL', 'http://catalog.mlpg.co/mlp/');
+
+/**
+ * URL to 4chan's API, <id> will be replaced with a thread ID
+ */
+define('API_URL', 'http://api.4chan.org/mlp/res/<id>.json');
+
+/**
+ * Catalog URL, used for finding possible threads quickly
+ */
+define('CATALOG_URL', 'http://boards.4chan.org/mlp/catalog');
+
+/**
+ * Keywords which should be searched for in thread's subject/comment
+ */
 define('THREAD_KEYWORDS', 'MLP General|MLPG|My Little Pony General');
-define('THREAD_URL', 'https://boards.4chan.org/mlp/res/');
 
-class Thread
-{
-	public $id;
-	public $url;
-	public $title;
-	public $replies;
-	public $images;
-}
+/**
+ * 4chan thread URL
+ */
+define('THREAD_URL', 'http://boards.4chan.org/mlp/res/');
 
-class Crawler
+/*************************************/
+
+class Locator
 {
-	public static function FindGenerals()
+	/**
+	 * Logger object
+	 * @var Logger
+	 */
+	private $_logger;
+	
+	/**
+	 * Class constructor
+	 * @param Logger $logger Logger object
+	 */
+	public function __construct(Logger $logger)
+	{
+		$this->_logger = $logger;
+	}
+	
+	/**
+	 * Find all possible generals from catalog
+	 * @return Thread[] Array of Thread objects
+	 * @throws Exception On any unrecoverable error
+	 */
+	public function findPossibleGenerals()
 	{
 		$threads = array();
-		$contents = file_get_contents(CATALOG_URL);
-		if ($contents !== false)
+		$catalogMatch = $keywordMatch = null;
+		$contents = @file_get_contents(CATALOG_URL);
+		if ($contents === false)
+			throw new Exception('Error while fetching the catalog (URL: ' . CATALOG_URL . ').');
+		if (preg_match('/var catalog = (?P<jsonstr>\{.+\});/', $contents, $catalogMatch))
 		{
-			if (preg_match('/var catalog = (?P<jsonstr>\{.+\});/', $contents, $jsonMatch))
+			$data = json_decode($catalogMatch['jsonstr']);
+			if (($data === null) || (!property_exists($data, 'threads')))
+				throw new Exception('Error while parsing response from catalog.');
+			$regexp = '/(' . THREAD_KEYWORDS . ')/i';
+			foreach ($data->threads as $id => $t)
 			{
-				$data = json_decode($jsonMatch['jsonstr']);
-				if ($data !== null)
+				if ((property_exists($t, 'teaser')) && (preg_match($regexp, $t->teaser, $keywordMatch)))
 				{
-					$regexp = '/(' . THREAD_KEYWORDS . ')/i';
-					foreach ($data->{'threads'} as $id => $t)
-					{
-						if (preg_match($regexp, $t->{'teaser'}, $match))
-						{
-							$thread = new Thread();
-							$thread->id = $id;
-							$thread->url = THREAD_URL . $id;
-							$thread->title = $t->{'teaser'};
-							$thread->replies = $t->{'r'};
-							$thread->images = $t->{'i'};
-							$threads[] = $thread;
-							Logger::AddLine('Thread (<a href="' . $thread->url . '">' . $thread->id . '</a>) found with keyword: ' . $match[1]);
-						}
-					}
-					Logger::Addline('Found ' . count($threads) . ' possible threads.');
+					$thread = new Thread();
+					$thread->id = $id;
+					$thread->url = THREAD_URL . $id;
+					$thread->title = $t->teaser;
+					$thread->replies = (property_exists($t, 'r')) ? $t->r : 0;
+					$thread->images = (property_exists($t, 'i')) ? $t->i : 0;
+					$threads[] = $thread;
+					$this->_logger->log('Thread (<a href="' . $thread->url . '">' . $thread->id . '</a>) found with keyword: ' . $keywordMatch[1] . '.');
 				}
-				else
-					Logger::Addline('Error while parsing the Catalog JSON.');
 			}
-			else
-				Logger::Addline('Couldn\'t find Catalog\'s JSON.');
+			$this->_logger->log('Found ' . count($threads) . ' possible thread(s).'); 
 		}
 		else
-			Logger::Addline('Error while connecting to the Catalog.');
+			throw new Exception('Couldn\'t find catalog\'s JSON.');
 		return $threads;
 	}
-
-	public static function FindMarker($threadId)
+	
+	/**
+	 * Try to find marker from the specified thread
+	 * @param int $threadId ID of the thread which should be searched
+	 * @return boolean True if marker was found, false otherwise
+	 * @throws Exception On failed 4chan API request or on response parse error
+	 */
+	public function hasMarker($threadId)
 	{
 		$url = preg_replace('/\<id\>/', $threadId, API_URL);
-		$contents = file_get_contents($url);
-		if ($contents !== false)
+		$contents = @file_get_contents($url);
+		if ($contents === false)
+			throw new Exception('Error while fetching thread ' . $threadId . ' from 4chan API.');
+		$data = json_decode($contents);
+		if (($data === null) || (!property_exists($data, 'posts')))
+			throw new Exception('Error while parsing response from 4chan API on thread ' . $threadId . '.');
+		foreach ($data->posts as $post)
 		{
-			$data = json_decode($contents);
-			foreach ($data->{'posts'} as $post)
+			if ((property_exists($post, 'md5')) && ($post->md5 === MARKER_MD5))
 			{
-				if ((property_exists($post, 'md5')) && ($post->{'md5'} === MARKER_MD5))
-				{
-					Logger::AddLine('Marker found from thread ' . $threadId);
-					return true;
-				}
+				$this->_logger->log('Marker found from thread ' . $threadId . '.');
+				return true;
 			}
 		}
 		return false;
 	}
 }
-
-class Logger
-{
-	private static $LOG = array();
-	
-	public static function AddLine($line)
-	{
-		self::$LOG[] = $line;
-	}
-	
-	public static function PrintLog()
-	{
-		echo '<div>Log:<br />';
-		foreach (self::$LOG as $line)
-			echo $line . '<br />';
-		echo '</div>';
-	}
-}
-
-function sortThreads($first, $second)
-{
-	return $first->id < $second->id;
-}
-
-/* TEST SCRIPT */
-
-$threads = Crawler::FindGenerals();
-if (count($threads) > 0)
-{
-	$markedThread = null;
-	usort($threads, 'sortThreads');
-	foreach ($threads as $thread)
-	{
-		if (Crawler::FindMarker($thread->id))
-		{
-			$markedThread = $thread;
-			break;
-		}
-	}
-	echo '<div>';
-	if (isset($markedThread))
-	{
-		echo 'Marker found from thread <a href="' . $markedThread->url . '">' . $markedThread->id . '</a>!<br />';
-		echo 'Thread title: ' . $markedThread->title . '<br />';
-		echo 'Replies: ' . $markedThread->replies . ', images: ' . $markedThread->images . '.<br />';
-	}
-	else
-	{
-		echo '<p>Couldn\'t find a marked thread, listing all possible generals:</p>';
-		foreach ($threads as $thread)
-		{
-			echo '<a href="' . $thread->url . '">Unmarked general with ID ' . $thread->id . ' (' . $thread->replies . ' replies, ' . $thread->images . ' images)<br />';
-		}
-	}
-	echo '</div>';
-	echo '<br /><br /><br />';
-	Logger::PrintLog();
-}
-else
-{
-	echo '<p>No threads found.</p>';
-}
-
