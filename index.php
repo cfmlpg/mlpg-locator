@@ -1,58 +1,63 @@
 <?php
 
 /*************************************
- * 
- * Test script for MLPG Locator.
- * 
+ * Test script for MLPG Locator.     *
  ************************************/
 
 // Error reporting
 ini_set("display_errors", 1); 
 error_reporting(E_ALL);
 
-// Require needed scripts
-require('thread.php'); // Thread class
-require('logger.php'); // Logger class
-require('locator.php'); // Locator class
+// Require the script
+require('catalog.php');
 
-/*** Start the magic ***/
+/**********************
+*** Start the magic ***
+**********************/
 
-// Initialize Logger class.
-// Locator uses Logger for informing of found threads/marker.
-// Unrecoverable errors won't be in Logger, Locator will throw them instead.
-$logger = new Logger();
-$locator = new Locator($logger);
-// Try-catch block needed incase something unexpected happens.
+echo '<html><head></head><body>';
+// Initialize Catalog class
+// Could pass catalog URL here, defaults to whatever's in defines.php.
+$catalog = new Catalog();
+// Catch exceptions
 try
 {
-	// Find all possible generals from catalog
-	$generals = $locator->findPossibleGenerals();
+	$threads = 
+		$catalog
+		->getThreads()		// Get all threads from catalog
+		->filter()			// Filter results (defaults to THREAD_KEYWORDS constant)
+		->sort()			// Sort filtered results (defaults to sort by ID)
+		->getResult();		// And get the filtered results!
+	// Echo statistics
+	echo 'Found ' . $catalog->count() . ' possible general(s) in catalog:<br />';
+	foreach ($threads as $thread)
+		echo '- Thread ' . $thread->link . ' by ' . $thread->author . ' on ' . $thread->date . '.<br />';
+	// Look for marker in each thread
+	$markerFound = false;
+	foreach ($threads as $thread)
+	{
+		// Another try-catch block needed so we don't break out of foreach loop
+		// incase a single API request fails.
+		try
+		{
+			if ($thread->isMarked())
+			{
+				$markerFound = true;
+				echo 'Marker found from thread ' . $thread->link . '.<br />';
+				break; // Break foreach loop if marker was found
+			}
+		}
+		catch (Exception $e)
+		{
+			echo 'Unexpected error, message returned was: ' . $e->getMessage() . '<br />';
+		}
+	}
+	if (!$markerFound)
+		// All threads checked, no marker found
+		echo 'No marker found.';
 }
 catch (Exception $e)
 {
-	echo $e->getMessage() . '<br />';
-	exit;
+	echo 'Unexpected error, message returned was: ' . $e->getMessage() . '<br />';
 }
-if (count($generals) === 0)
-{
-	echo 'No generals found.';
-	exit;
-}
-// Sort threads by ID
-usort($generals, array('Thread', 'sortThreads'));
-// Look for marker in each one
-foreach ($generals as $general)
-{
-	// Catch exceptions on thread-by-thread basis
-	try
-	{
-		if ($locator->hasMarker($general->id))
-			break; // Marker found. Just break, log will have more details.
-	}
-	catch (Exception $e)
-	{
-		echo $e->getMessage() . '<br />';
-	}
-}
-// Print log
-echo $logger;
+echo '</body></html>';
