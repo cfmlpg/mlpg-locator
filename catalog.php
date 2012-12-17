@@ -1,5 +1,9 @@
 <?php
 
+// Quick fix, ensure that a default timezone is set (required since PHP 5.1.0)
+if (!ini_get('date.timezone'))
+	date_default_timezone_set('UTC');
+
 // Require needed scripts
 require('defines.php');
 require('thread.php');

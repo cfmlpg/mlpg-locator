@@ -6,7 +6,7 @@
 
 // Error reporting
 ini_set("display_errors", 1); 
-error_reporting(E_ALL);
+error_reporting(-1);
 
 // Require the script
 require('catalog.php');
